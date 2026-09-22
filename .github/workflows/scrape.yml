@@ -1,0 +1,73 @@
+name: MyJobMag Scraper
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_page:
+        description: "Page to start scraping from (optional override)"
+        required: false
+        default: ""
+      end_page:
+        description: "Page to stop scraping at (optional override)"
+        required: false
+        default: ""
+  schedule:
+  - cron: "0 */2 * * *"
+
+concurrency:
+  group: myjobmag-scraper
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # required so the "commit and push state" step can push
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run scraper
+        env:
+          WP_BASE_URL: ${{ secrets.WP_BASE_URL }}
+          WP_USERNAME: ${{ secrets.WP_USERNAME }}
+          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
+          START_PAGE: ${{ github.event.inputs.start_page }}
+          END_PAGE: ${{ github.event.inputs.end_page }}
+        run: python myjobmag_scraper.py
+
+      - name: Upload debug log as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-log-${{ github.run_id }}
+          path: debug.log
+          if-no-files-found: ignore
+
+      - name: Commit and push updated state
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add processed.csv current_page.txt
+          if git diff --cached --quiet; then
+            echo "No state changes to commit."
+          else
+            git commit -m "chore: update scraper state [skip ci]"
+            git push
+          fi
